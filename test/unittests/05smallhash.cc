@@ -90,6 +90,8 @@ int main() {
 
   printf("MULTI-HASH:\n");
   uint32_t sizes[HASHMAPS];
+  uint64_t num_collisions[HASHMAPS];
+  uint32_t max_collisions[HASHMAPS];
   uint32_t overallsize;
 
   time_t start = time(NULL);
@@ -114,9 +116,11 @@ int main() {
   //multihash.Clear();
   printf("Real Time: %d seconds\n", end-start);
   multihash.GetSizes(sizes);
+  multihash.GetCollisionStats(num_collisions, max_collisions);
   overallsize = 0;
   for (int i = 0; i < HASHMAPS; ++i) {
-    printf("Size subtable %d %u\n", i, sizes[i]);
+    printf("Size subtable %d %u, collisions %d/%d\n",
+           i, sizes[i], num_collisions[i], max_collisions[i]);
     overallsize += sizes[i];
   }
   printf("overall size: %u\n", overallsize);

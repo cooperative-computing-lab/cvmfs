@@ -33,121 +33,113 @@
 using namespace std;  // NOLINT
 
 namespace glue {
-
-
+  
+  
 /**
  * Parent inode has to be already present (or inode is a root inode)
  * \return true if the inode is new, false otherwise
  */
-bool InodeContainer::Get(const uint64_t inode, const uint64_t parent_inode,
-                         const NameString &name)
+bool InodeContainer::Get(const uint64_t inode, const uint64_t parent_inode, 
+                         const NameString &name) 
 {
-  LogCvmfs(kLogGlueBuffer, kLogDebug, "get inode %"PRIu64", name %s",
+  LogCvmfs(kLogGlueBuffer, kLogDebug, "get inode %"PRIu64", name %s", 
            inode, name.c_str());
-  Dirent value;
-  bool found = map_.Lookup(inode, &value);
-  if (found) {
-    value.references++;
-    map_.Insert(inode, value);
+  InodeMap::iterator iter_inode = map_.find(inode);
+  if (iter_inode != map_.end()) {
+    (*iter_inode).second.references++;
     return false;
   }
-
+  
   // New inode
-  map_.Insert(inode, Dirent(parent_inode, name));
+  map_[inode] = Dirent(parent_inode, name);
   if (!name.IsEmpty()) {
-    found = map_.Lookup(parent_inode, &value);
-    assert(found);
-    value.references++;
-    map_.Insert(parent_inode, value);
+    InodeMap::iterator iter_parent_inode = map_.find(parent_inode);
+    assert(iter_parent_inode != map_.end());
+    (*iter_parent_inode).second.references++;
   }
   return true;
 }
-
-
+  
+  
 /**
  * Same as Get() but don't add parent inodes reference (done before);
  * \return true if it is a new inode, false otherwise
  */
-bool InodeContainer::Add(const uint64_t inode, const uint64_t parent_inode,
+bool InodeContainer::Add(const uint64_t inode, const uint64_t parent_inode, 
                          const NameString &name)
 {
-  LogCvmfs(kLogGlueBuffer, kLogDebug, "add inode %"PRIu64", name %s",
+  LogCvmfs(kLogGlueBuffer, kLogDebug, "add inode %"PRIu64", name %s", 
            inode, name.c_str());
-  Dirent value;
-  const bool found = map_.Lookup(inode, &value);
-  if (found) {
-    value.references++;
-    map_.Insert(inode, value);
+  InodeMap::iterator iter_inode = map_.find(inode);
+  if (iter_inode != map_.end()) {
+    (*iter_inode).second.references++;
     return false;
   }
-
+  
   // New inode
-  map_.Insert(inode, Dirent(parent_inode, name));
+  map_[inode] = Dirent(parent_inode, name);
   return true;
 }
-
+  
 
 /**
  * \return number of removed inodes
  */
 uint32_t InodeContainer::Put(const uint64_t inode, const uint32_t by) {
   LogCvmfs(kLogGlueBuffer, kLogDebug, "put inode %"PRIu64" by %u", inode, by);
-  Dirent value;
-  bool found = map_.Lookup(inode, &value);
-  assert(found);
-  assert(value.references >= by);
-  value.references -= by;
+  InodeMap::iterator iter_inode = map_.find(inode);
+  assert(iter_inode != map_.end());
+  assert((*iter_inode).second.references >= by);
+  (*iter_inode).second.references -= by;
   uint32_t result = 0;
-  if (value.references == 0) {
+  if ((*iter_inode).second.references == 0) {
     result = 1;
-    if (!value.name.IsEmpty())
-      result += Put(value.parent_inode, 1);
-    map_.Erase(inode);
-  } else {
-    map_.Insert(inode, value);
+    if (!iter_inode->second.name.IsEmpty()) 
+      result += Put((*iter_inode).second.parent_inode, 1);
+    map_.erase(iter_inode);
+  }
+  return result;
+}
+  
+
+bool InodeContainer::ConstructPath(const uint64_t inode, PathString *path) {
+  InodeMap::const_iterator needle = map_.find(inode);
+  if (needle == map_.end())
+    return false;
+  
+  if (needle->second.name.IsEmpty())
+    return true;
+  
+  bool retval = ConstructPath(needle->second.parent_inode, path);
+  path->Append("/", 1);
+  path->Append(needle->second.name.GetChars(), 
+               needle->second.name.GetLength());
+  if (!retval) {
+    LogCvmfs(kLogGlueBuffer, kLogDebug | kLogSyslog, "internal error: "
+            "failed constructing (path so far %s, inode %"PRIu64")", 
+            path->c_str(), inode);
+  }
+  return retval;
+}
+  
+  
+string InodeContainer::DebugPrint() {
+  string result;
+  for (InodeMap::const_iterator i = map_.begin(), iEnd = map_.end(); 
+       i != iEnd; ++i)
+  {
+    result += "[" + StringifyInt(i->first) + "]  parent: " + 
+      StringifyInt(i->second.parent_inode) + "  name: " +
+      i->second.name.ToString() + "  refcnt: " + 
+      StringifyInt(i->second.references) + "\n";
   }
   return result;
 }
 
 
-bool InodeContainer::ConstructPath(const uint64_t inode, PathString *path) {
-  Dirent value;
-  bool found = map_.Lookup(inode, &value);
-  if (!found)
-    return false;
-
-  if (value.name.IsEmpty())
-    return true;
-
-  bool retval = ConstructPath(value.parent_inode, path);
-  path->Append("/", 1);
-  path->Append(value.name.GetChars(), value.name.GetLength());
-  if (!retval) {
-    LogCvmfs(kLogGlueBuffer, kLogDebug | kLogSyslog, "internal error: "
-            "failed constructing (path so far %s, inode %"PRIu64")",
-            path->c_str(), inode);
-  }
-  return retval;
-}
-
-
-string InodeContainer::DebugPrint() {
-/*  string result;
-  for (InodeMap::const_iterator i = map_.begin(), iEnd = map_.end();
-       i != iEnd; ++i)
-  {
-    result += "[" + StringifyInt(i->first) + "]  parent: " +
-      StringifyInt(i->second.parent_inode) + "  name: " +
-      i->second.name.ToString() + "  refcnt: " +
-      StringifyInt(i->second.references) + "\n";
-  }
-  return result;*/
-}
-
-
 //------------------------------------------------------------------------------
-
-
+  
+  
 void InodeTracker::InitLock() {
   lock_ =
     reinterpret_cast<pthread_mutex_t *>(smalloc(sizeof(pthread_mutex_t)));
@@ -164,7 +156,7 @@ void InodeTracker::CopyFrom(const InodeTracker &other) {
 }
 
 
-InodeTracker::InodeTracker() {
+InodeTracker::InodeTracker() { 
   version_ = kVersion;
   InitLock();
 }
@@ -179,7 +171,7 @@ InodeTracker::InodeTracker(const InodeTracker &other) {
 InodeTracker &InodeTracker::operator= (const InodeTracker &other) {
   if (&other == this)
     return *this;
-
+  
   CopyFrom(other);
   return *this;
 }
@@ -196,7 +188,7 @@ InodeTracker::~InodeTracker() {
  *         present
  */
 bool InodeTracker::VfsGet(const uint64_t inode, const uint64_t parent_inode,
-                          const NameString &name)
+                          const NameString &name) 
 {
   Lock();
   if (!name.IsEmpty() && !inode2path_.Contains(parent_inode)) {
@@ -206,20 +198,20 @@ bool InodeTracker::VfsGet(const uint64_t inode, const uint64_t parent_inode,
   }
   bool new_inode = inode2path_.Get(inode, parent_inode, name);
   Unlock();
-
+  
   if (new_inode)
     atomic_inc64(&statistics_.num_inserts);
   atomic_inc64(&statistics_.num_references);
   return true;
 }
-
-
+  
+  
 /**
  * Assumes that the parent is already present
  * \return true if it is a new inode, false otherwise
  */
 bool InodeTracker::VfsAdd(const uint64_t inode, const uint64_t parent_inode,
-                          const NameString &name)
+                          const NameString &name) 
 {
   Lock();
   bool new_inode = inode2path_.Add(inode, parent_inode, name);
@@ -248,7 +240,7 @@ bool InodeTracker::Find(const uint64_t inode, PathString *path) {
   Lock();
   result = inode2path_.ConstructPath(inode, path);
   Unlock();
-
+  
   if (result) {
     atomic_inc64(&statistics_.num_ancient_hits);
     return true;

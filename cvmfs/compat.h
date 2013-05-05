@@ -17,7 +17,8 @@
 #include <map>
 #include <vector>
 
-#include "smallhash.h"
+#include <google/sparse_hash_map>
+
 #include "shortstring.h"
 #include "atomic.h"
 #include "dirent.h"
@@ -29,13 +30,9 @@
 
 namespace glue {
 
-static inline uint32_t hasher_inode(const uint64_t &key) {
-  return MurmurHash2(&key, sizeof(key), 0x07387a4f);
-}
-
 struct Dirent {
   Dirent() { parent_inode = 0; }
-  Dirent(const uint64_t p, const NameString &n) {
+  Dirent(const uint64_t p, const NameString &n) { 
     parent_inode = p;
     name = n;
     references = 1;
@@ -48,27 +45,29 @@ struct Dirent {
 
 class InodeContainer {
  public:
-  typedef SmallHashDynamic<uint64_t, glue::Dirent> InodeMap;
-
+  typedef google::sparse_hash_map<uint64_t, glue::Dirent, 
+          hash_murmur<uint64_t> >
+          InodeMap;
+  
   InodeContainer() {
-    map_.Init(64, 0, hasher_inode);
+    map_.set_deleted_key(0);
   }
-  bool Add(const uint64_t inode, const uint64_t parent_inode,
+  bool Add(const uint64_t inode, const uint64_t parent_inode, 
            const NameString &name);
-  bool Get(const uint64_t inode, const uint64_t parent_inode,
+  bool Get(const uint64_t inode, const uint64_t parent_inode, 
            const NameString &name);
-  uint32_t Put(const uint64_t inode, const uint32_t by);
+  uint32_t Put(const uint64_t inode, const uint32_t by);  
   bool ConstructPath(const uint64_t inode, PathString *path);
   bool Contains(const uint64_t inode) {
-    return map_.Contains(inode);
+    return map_.find(inode) != map_.end();
   }
   inline size_t Size() { return map_.size(); }
  private:
   std::string DebugPrint();
   InodeMap map_;
 };
-
-
+  
+  
 /**
  * Tracks inode reference counters as given by Fuse.
  */
@@ -85,7 +84,7 @@ public:
       atomic_init64(&num_ancient_misses);
     }
     std::string Print() {
-      return
+      return 
       "inserts: " + StringifyInt(atomic_read64(&num_inserts)) +
       "  dangling-try: " + StringifyInt(atomic_read64(&num_dangling_try)) +
       "  double-add: " + StringifyInt(atomic_read64(&num_double_add)) +
@@ -103,19 +102,19 @@ public:
     atomic_int64 num_ancient_misses;
   };
   Statistics GetStatistics() { return statistics_; }
-
+  
   InodeTracker();
   explicit InodeTracker(const InodeTracker &other);
   InodeTracker &operator= (const InodeTracker &other);
   ~InodeTracker();
-
+  
   bool VfsGet(const uint64_t inode, const uint64_t parent_inode,
               const NameString &name);
   bool VfsAdd(const uint64_t inode, const uint64_t parent_inode,
               const NameString &name);
   void VfsPut(const uint64_t inode, const uint32_t by);
   bool Find(const uint64_t inode, PathString *path);
-
+  
 private:
   static const unsigned kVersion = 1;
 
@@ -129,8 +128,8 @@ private:
     int retval = pthread_mutex_unlock(lock_);
     assert(retval == 0);
   }
-
-  unsigned version_;
+  
+  unsigned version_; 
   pthread_mutex_t *lock_;
   InodeContainer inode2path_;
   Statistics statistics_;
