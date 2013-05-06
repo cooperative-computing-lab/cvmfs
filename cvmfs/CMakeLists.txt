@@ -55,6 +55,7 @@ set (CVMFS2_DEBUG_SOURCES
   glue_buffer.h glue_buffer.cc
   loader.h
   history.h history.cc
+  fuse_smartforget.h fuse_smartforget.cc
   cvmfs.h cvmfs.cc
 )
 
